@@ -1,0 +1,55 @@
+package gen
+
+import (
+	"github.com/influxdata/influxdb/tsdb"
+)
+
+{{range .}}
+type {{.Name}}ValuesSequence interface {
+	Reset()
+	Write(v []{{.Type}})
+}
+
+type Time{{.Name}}ValuesSequence struct {
+	vals  {{.Name}}Array
+	ts    TimestampSequence
+	vs    {{.Name}}ValuesSequence
+	count int
+	n     int
+}
+
+func NewTime{{.Name}}ValuesSequence(count int, ts TimestampSequence, vs {{.Name}}ValuesSequence) TimeValuesSequence {
+	return &Time{{.Name}}ValuesSequence{
+		vals:  *New{{.Name}}ArrayLen(tsdb.DefaultMaxPointsPerBlock),
+		ts:    ts,
+		vs:    vs,
+		count: count,
+		n:     count,
+	}
+}
+
+func (s *Time{{.Name}}ValuesSequence) Reset() {
+	s.ts.Reset()
+	s.vs.Reset()
+	s.n = s.count
+}
+
+func (s *Time{{.Name}}ValuesSequence) Next() bool {
+	if s.n > 0 {
+		c := min(s.n, tsdb.DefaultMaxPointsPerBlock)
+		s.n -= c
+		s.vals.Timestamps = s.vals.Timestamps[:c]
+		s.vals.Values = s.vals.Values[:c]
+
+		s.ts.Write(s.vals.Timestamps)
+		s.vs.Write(s.vals.Values)
+		return true
+	}
+
+	return false
+}
+
+func (s *Time{{.Name}}ValuesSequence) Values() Values {
+	return &s.vals
+}
+{{end}}

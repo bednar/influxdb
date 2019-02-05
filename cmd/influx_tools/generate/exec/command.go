@@ -6,15 +6,16 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math"
 	"os"
+	"strings"
+	"text/template"
 	"time"
 
 	"github.com/influxdata/influxdb/cmd/influx_tools/generate"
 	"github.com/influxdata/influxdb/cmd/influx_tools/internal/profile"
 	"github.com/influxdata/influxdb/cmd/influx_tools/server"
+	"github.com/influxdata/influxdb/pkg/data/gen"
 	"github.com/influxdata/influxdb/services/meta"
-	"github.com/influxdata/platform/pkg/data/gen"
 )
 
 // Command represents the program execution for "store query".
@@ -30,12 +31,14 @@ type Command struct {
 	printOnly   bool
 	noTSI       bool
 	concurrency int
-	spec        generate.Spec
+	schemaPath  string
+	storageSpec generate.StorageSpec
+	schemaSpec  generate.SchemaSpec
 
 	profile profile.Config
 }
 
-type SeriesGeneratorFilter func(sgi meta.ShardGroupInfo, g SeriesGenerator) SeriesGenerator
+type SeriesGeneratorFilter func(sgi meta.ShardGroupInfo, g gen.SeriesGenerator) gen.SeriesGenerator
 
 type Dependencies struct {
 	Server server.Interface
@@ -67,68 +70,106 @@ func (cmd *Command) Run(args []string) (err error) {
 		return err
 	}
 
-	plan, err := cmd.spec.Plan(cmd.server)
+	storagePlan, err := cmd.storageSpec.Plan(cmd.server)
 	if err != nil {
 		return err
 	}
 
-	plan.PrintPlan(cmd.Stdout)
+	storagePlan.PrintPlan(cmd.Stdout)
+
+	var spec *gen.Spec
+	if cmd.schemaPath != "" {
+		var err error
+		spec, err = gen.NewSpecFromPath(cmd.schemaPath)
+		if err != nil {
+			return err
+		}
+	} else {
+		schemaPlan, err := cmd.schemaSpec.Plan(storagePlan)
+		if err != nil {
+			return err
+		}
+
+		schemaPlan.PrintPlan(cmd.Stdout)
+		spec = cmd.planToSpec(schemaPlan)
+	}
 
 	if cmd.printOnly {
 		return nil
 	}
 
-	if err = plan.InitFileSystem(cmd.server.MetaClient()); err != nil {
+	if err = storagePlan.InitFileSystem(cmd.server.MetaClient()); err != nil {
 		return err
 	}
 
-	return cmd.exec(plan)
+	return cmd.exec(storagePlan, spec)
 }
 
 func (cmd *Command) parseFlags(args []string) error {
 	fs := flag.NewFlagSet("gen-init", flag.ContinueOnError)
 	fs.StringVar(&cmd.configPath, "config", "", "Config file")
+	fs.StringVar(&cmd.schemaPath, "schema", "", "Schema TOML file")
 	fs.BoolVar(&cmd.printOnly, "print", false, "Print data spec only")
 	fs.BoolVar(&cmd.noTSI, "no-tsi", false, "Skip building TSI index")
 	fs.IntVar(&cmd.concurrency, "c", 1, "Number of shards to generate concurrently")
 	fs.StringVar(&cmd.profile.CPU, "cpuprofile", "", "Collect a CPU profile")
 	fs.StringVar(&cmd.profile.Memory, "memprofile", "", "Collect a memory profile")
-	cmd.spec.AddFlags(fs)
+	cmd.storageSpec.AddFlags(fs)
+	cmd.schemaSpec.AddFlags(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	if cmd.spec.Database == "" {
+	if cmd.storageSpec.Database == "" {
 		return errors.New("database is required")
 	}
 
-	if cmd.spec.Retention == "" {
+	if cmd.storageSpec.Retention == "" {
 		return errors.New("retention policy is required")
 	}
 
 	return nil
 }
 
-func (cmd *Command) exec(p *generate.Plan) error {
-	groups := p.ShardGroups()
-	gens := make([]SeriesGenerator, len(groups))
+var (
+	tomlSchema = template.Must(template.New("schema").Parse(`
+title = "CLI schema"
+
+[[measurements]]
+name = "m0"
+tags = [
+{{- range $i, $e := .Tags }}
+	{ name = "tag{{$i}}", source = { type = "sequence", format = "value%s", start = 0, count = {{$e}} } },{{ end }}
+]
+fields = [
+	{ name = "v0", count = {{ .PointsPerSeriesPerShard }}, source = 1.0 },
+]`))
+)
+
+func (cmd *Command) planToSpec(p *generate.SchemaPlan) *gen.Spec {
+	var sb strings.Builder
+	if err := tomlSchema.Execute(&sb, p); err != nil {
+		panic(err)
+	}
+
+	spec, err := gen.NewSpecFromToml(sb.String())
+	if err != nil {
+		panic(err)
+	}
+	return spec
+}
+
+func (cmd *Command) exec(storagePlan *generate.StoragePlan, spec *gen.Spec) error {
+	groups := storagePlan.ShardGroups()
+	gens := make([]gen.SeriesGenerator, len(groups))
 	for i := range gens {
-		var (
-			name []byte
-			keys []string
-			tv   []gen.CountableSequence
-		)
-
-		name = []byte("m0")
-		tv = make([]gen.CountableSequence, len(p.Tags))
-		setTagVals(p.Tags, tv)
-		keys = make([]string, len(p.Tags))
-		setTagKeys("tag", keys)
-
 		sgi := groups[i]
-		vg := gen.NewIntegerConstantValuesSequence(p.PointsPerSeriesPerShard, sgi.StartTime, p.ShardDuration/time.Duration(p.PointsPerSeriesPerShard), 1)
-		gens[i] = NewSeriesGenerator(name, []byte("v0"), vg, gen.NewTagsValuesSequenceKeysValues(keys, tv))
+		tr := gen.TimeRange{
+			Start: sgi.StartTime,
+			End:   sgi.EndTime,
+		}
+		gens[i] = gen.NewSeriesGeneratorFromSpec(spec, tr)
 		if cmd.filter != nil {
 			gens[i] = cmd.filter(sgi, gens[i])
 		}
@@ -145,19 +186,5 @@ func (cmd *Command) exec(p *generate.Plan) error {
 	}()
 
 	g := Generator{Concurrency: cmd.concurrency, BuildTSI: !cmd.noTSI}
-	return g.Run(context.Background(), p.Database, p.ShardPath(), p.NodeShardGroups(), gens)
-}
-
-func setTagVals(tags []int, tv []gen.CountableSequence) {
-	for j := range tags {
-		tv[j] = gen.NewCounterByteSequenceCount(tags[j])
-	}
-}
-
-func setTagKeys(prefix string, keys []string) {
-	tw := int(math.Ceil(math.Log10(float64(len(keys)))))
-	tf := fmt.Sprintf("%s%%0%dd", prefix, tw)
-	for i := range keys {
-		keys[i] = fmt.Sprintf(tf, i)
-	}
+	return g.Run(context.Background(), storagePlan.Database, storagePlan.ShardPath(), storagePlan.NodeShardGroups(), gens)
 }
