@@ -12,7 +12,7 @@ import {
   TICK_PADDING_RIGHT,
   TICK_PADDING_TOP,
 } from 'src/minard'
-import {PlotAction} from 'src/minard/actions'
+import {PlotAction} from 'src/minard/utils/plotEnvActions'
 import {assert} from 'src/minard/utils/assert'
 
 export const INITIAL_PLOT_ENV: PlotEnv = {
@@ -30,6 +30,8 @@ export const INITIAL_PLOT_ENV: PlotEnv = {
   yTicks: [],
   xDomain: [],
   yDomain: [],
+  mouseX: null,
+  mouseY: null,
   margins: {
     top: PLOT_PADDING,
     right: PLOT_PADDING,
@@ -39,7 +41,7 @@ export const INITIAL_PLOT_ENV: PlotEnv = {
   dispatch: () => {},
 }
 
-export const reducer = (state: PlotEnv, action: PlotAction): PlotEnv =>
+export const plotEnvReducer = (state: PlotEnv, action: PlotAction): PlotEnv =>
   produce(state, draftState => {
     switch (action.type) {
       case 'REGISTER_LAYER': {

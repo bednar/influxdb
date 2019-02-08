@@ -1,9 +1,14 @@
-import React, {useReducer, useEffect, SFC, CSSProperties} from 'react'
+import React, {useReducer, useEffect, useRef, SFC, CSSProperties} from 'react'
 
 import {Table, PlotEnv, CATEGORY_10} from 'src/minard'
-import {setDimensions, setTable, setColors} from 'src/minard/actions'
 import {Axes} from 'src/minard/components/Axes'
-import {reducer, INITIAL_PLOT_ENV} from 'src/minard/plotEnv'
+import {plotEnvReducer, INITIAL_PLOT_ENV} from 'src/minard/utils/plotEnvReducer'
+import {useMousePos} from 'src/minard/utils/useMousePos'
+import {
+  setDimensions,
+  setTable,
+  setColors,
+} from 'src/minard/utils/plotEnvActions'
 
 export interface Props {
   // Required props
@@ -49,7 +54,6 @@ export interface Props {
   // yTicksStroke?: string
 }
 
-
 export const Plot: SFC<Props> = ({
   width,
   height,
@@ -62,7 +66,7 @@ export const Plot: SFC<Props> = ({
   tickFont = 'bold 10px Roboto',
   tickFill = '#8e91a1',
 }) => {
-  const [env, dispatch] = useReducer(reducer, {
+  const [env, dispatch] = useReducer(plotEnvReducer, {
     ...INITIAL_PLOT_ENV,
     width,
     height,
@@ -88,6 +92,9 @@ export const Plot: SFC<Props> = ({
     left: `${env.margins.left}px`,
   }
 
+  const mouseRegion = useRef<HTMLDivElement>(null)
+  const [mouseX, mouseY] = useMousePos(mouseRegion)
+
   return (
     <div className="minard-plot" style={plotStyle}>
       <Axes
@@ -97,8 +104,13 @@ export const Plot: SFC<Props> = ({
         tickFill={tickFill}
       >
         <div className="minard-layers" style={layersStyle}>
-          {children({...env, dispatch})}
+          {children({...env, dispatch, mouseX, mouseY})}
         </div>
+        <div
+          className="minard-mouse-region"
+          style={layersStyle}
+          ref={mouseRegion}
+        />
       </Axes>
     </div>
   )

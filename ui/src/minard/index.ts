@@ -1,4 +1,4 @@
-import {PlotAction} from 'src/minard/actions'
+import {PlotAction} from 'src/minard/utils/plotEnvActions'
 
 export const PLOT_PADDING = 20
 export const TICK_CHAR_WIDTH = 7
@@ -24,9 +24,13 @@ export {Plot} from 'src/minard/components/Plot'
 export {
   Histogram,
   Position as HistogramPosition,
+  TooltipProps as HistogramTooltipProps,
 } from 'src/minard/components/Histogram'
 
-export type Scale<D = number, R = number> = (x: D) => R
+export interface Scale<D = number, R = number> {
+  (x: D): R
+  invert: (y: R) => D
+}
 
 export interface AestheticDataMappings {
   [aestheticName: string]: string
@@ -62,6 +66,8 @@ export interface PlotEnv {
   xTicks: string[]
   yTicks: string[]
   margins: Margins
+  mouseX: number
+  mouseY: number
   dispatch: (action: PlotAction) => void
 }
 

@@ -48,7 +48,7 @@ export const toMinardTable = (tables: FluxTable[]): ToMinardTableResult => {
         // the current column?
         const value = columnConflictsSchema
           ? undefined
-          : parseValue(table.data[i][j], columnType)
+          : parseValue(table.data[i][j].trim(), columnType)
 
         columns[column][k + i - 1] = value
       }

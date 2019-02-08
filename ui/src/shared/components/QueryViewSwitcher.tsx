@@ -8,7 +8,7 @@ import SingleStat from 'src/shared/components/SingleStat'
 import SingleStatTransform from 'src/shared/components/SingleStatTransform'
 import TableGraphs from 'src/shared/components/tables/TableGraphs'
 import DygraphContainer from 'src/shared/components/DygraphContainer'
-import InfluxHistogram from 'src/shared/components/InfluxHistogram'
+import Histogram from 'src/shared/components/Histogram'
 
 // Types
 import {
@@ -89,7 +89,7 @@ export default class QueryViewSwitcher extends PureComponent<Props> {
         return (
           <AutoSizer>
             {({width, height}) => (
-              <InfluxHistogram width={width} height={height} tables={tables} />
+              <Histogram width={width} height={height} tables={tables} />
             )}
           </AutoSizer>
         )
